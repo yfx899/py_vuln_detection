@@ -9,23 +9,25 @@ Cleaning functions are functions that clean unsafe input
 Preliminary version with a lot bugs
 
 
-Todo:
+Todo (in no particular order)
 
-Refactor to get rid of redundant/ugly/non-pythonic code
+1. Refactor to get rid of redundant/ugly/non-pythonic code
 
-Deal with nested function calls of depth more than 1
+2. Deal with nested function calls of depth more than 1
 
-Functions that return user input can be treated as dangerous variables
+3. Functions that return user input can be treated as dangerous variables
 
-Duplicate method names may cause false positives (last one declared is the one that's actually defined)
+4. Duplicate method names may cause false positives (last one declared is the one that's actually defined)
 
-Dealing with method calls before said methods are declared (e.g. potential dangerous calls)
+5. Dealing with method calls before said methods are declared (e.g. potential dangerous calls)
 
-Local/nonlocal/global variables
+6. Local/nonlocal/global variables
 
-Tuple assignment/reassignment
+7. Tuple assignment/reassignment
 
-Look into other magic methods other than __init__
+8. Look into other magic methods other than __init__
 
+
+Some of these will take an hour, others much longer
 
 Inspired by: http://php-security.org/downloads/rips.pdf
