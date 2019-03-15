@@ -1,64 +1,73 @@
 import inspect
 import ast
 
-#Your test class/function
-class Test:
-    def __init__(self):
-        self.bar = input()
-    def foo(self):
-        eval(self.bar)
-        b = raw_input()
-        def find():
-            bar = 'change'
-            eval(self.bar)
-            eval(b)
+def foo(arg):
 
-            
-#Methods, variables, etc
-user_inputs = {'raw_input', 'input'}
-#Function name, dangerous parameter, cleaning functions
-bad_functions = {
+	a = user_input()
+	eval(a)
+	a = 1
+	eval(a)
+	a = user_input()
+	def new_scope(arg):
+		eval(a)
 
-    'eval' : [0, []]
+#user_input_method : which paramater it takes to taint this
+tainted_methods = {'user_input': None}
 
-              }
+tainted_variables = set()
 
-results = set()
+#dang2 does not exist. For testing purposes
+dangerous_methods = {'eval' : 0,
+					'dang2': 0}
 
+cleaning_methods = {'eval' : {'clean_eval'}}
 
+#These functions do not exist. For testing purposes
+all_cleaning_methods = {'clean_eval': 0,
+						'false_clean_eval': 0}
+
+variable_attributes = {'Name':'id',
+'Dict':'',
+'Num': 'n',
+'Str':'s'
+}
 
 class VariableDef:
     def __init__(self, var_type, index, line_number, name):
         
         self.name = name
-        #type (parameter/local/nonlocal/global/instance/class (self)/regular)
         self.var_type = var_type
         self.is_dangerous = False
-        #refers to parameter variables only
         self.parameter_index = index
         self.pointer = None
         self.line_number = line_number
-        
-        
+
 class SimpleVisitor(ast.NodeVisitor):
-    def __init__(self):
+    def __init__(self, assumption):
         self.scope = [['global', {}]]
+        self.classes = []
+        #This handles functions that have not been found
+        #And the assumption that it returns user input (or not)
+        self.assume = assumption
 
 
     def visit_ClassDef(self, node, *args, **kwargs):
         #Class definition is technically not a new scope
         #But we will keep track of it anyway
         #To track class variables that may be used in features later on
-        self.scope.append(['class', node.name, {}])
+        self.scope.append(['class', 1, node.name, {}])
         self.generic_visit(node)
         self.scope.pop()
     
     def visit_FunctionDef(self, node, *args, **kwargs):
-        self.scope.append(['function', node.name, {}])
+        self.scope.append(['function', self.scope[-1][1] if (self.scope and self.scope[-1][1] == 'class') else None, node.name, {}])
         self.set_variables('function', node)
         self.generic_visit(node)
+
         self.scope.pop()
     #Todo
+    def visit_Return(self, node, *args, **kwargs):
+    	pass
     def visit_Global(self, node, *args, **kwargs):
         self.generic_visit(node)
 
@@ -68,162 +77,99 @@ class SimpleVisitor(ast.NodeVisitor):
     def post_Order(node):
         pass
 
+        #Assume everything returns user input
+        #Unless we have found that it doesn't
+    def dangerous_method_call(self, node, parent, level):
+    	object_name = type(node).__name__
+    	if object_name in  {'List', 'Name', 'Num', 'Str', 'Dict'}:
+    		return self.is_dangerous(node)
+    	if object_name == 'Call':
+    		#We don't care about anymore dangerous calls
+			#Under this, since it will be calleed recursively
+			#Once generic visit hits again, anyways
+			#So we are only looking for tainted functions or variables
+    		if node.func.id in dangerous_methods:
+    			if level:
+	    			if self.dangerous_method_call(node.args[dangerous_methods[node.func.id]], node.func.id, 0):
+	    				print('Potentially dangerous call at line number: ', node.lineno)
+	    				return True
+	    		return False
+    		elif parent and (node.func.id in tainted_methods) and not level:
+    			return True if tainted_methods[node.func.id] is None else self.dangerous_method_call(node.args[tainted_methods[node.func.id]], parent, level)
+    		#Anything it returns will be cleaned for this function, so don't have to search past this
+    		elif parent and (node.func.id in cleaning_methods[parent]):
+    			return False
+    		#If it's a cleaning function but it doesn't clean for this dangerous
+    		#function, then assume it returns tainted user input if called with the input parameter
+    		elif parent and (node.func.id in all_cleaning_methods):
+    			return self.dangerous_method_call(node.args[all_cleaning_methods[node.func.id]], parent, level)
+    		
+    		#If we get here, it means we don't know what the function returns. We will return True if we assume it returns user input, or false.
+    		#Potential for false positives. User can set this.
+    		return self.assume
+
+
+
     def visit_Call(self, node, *args, **kwargs):
-        
-        if hasattr(node, 'args'):
-            if node.func.id in bad_functions and len(node.args) > bad_functions[node.func.id][0]:
-                index = bad_functions[node.func.id][0]
-                if hasattr(node.args[index], 'func'):
-                    if node.args[index].func.id in user_inputs:
-                        results.add((node.func.id, node.lineno))
-                else:
-                    var_name, var_type = self.find_type(node.args[index])
-
-                    #This may be confusing, but what it means is that if its a regular or "class variable" without self.
-                    #As, you can onyl refer to class/instance variables by including a self.
-                    #Then resolve the scope as usual. Otherwise, if it's a self which explicity
-                    #tells you to find the "class/instance" variable, then restrict it to class
-                    #Should change this
-                    
-                    scope = 'regular' if var_type == 'regular' or var_type == 'class' else 'class'
-                    result = self.is_dangerous(var_name, scope)
-                    if var_name in user_inputs or result:
-                        if result.var_type == 'parameter':
-                            #User defined dangerous function
-                            bad_functions[node.func.id] = [result.parameter_index, []]
-                        results.add((node.func.id, node.lineno, result))
-
-            
-        self.generic_visit(node)
+       self.dangerous_method_call(node, None, 1)
+       self.generic_visit(node)
+ 
 
     def visit_Assign(self, node, *args, **kwargs):
         self.set_variables('regular', node)
         self.generic_visit(node)
 
-
-
-
-    #Is the declaration a variable or function or...
-    #Takes assign object that has a value attribute
-    def declaration_type(self, node):
-        if hasattr(node.value, 'func'):
-            return [node.value, node.value.func.id, 'function']
-        if hasattr(node.value, 'id'):
-            return [node.value, node.value.id, 'var']
+    def decompose_variable_type_name(self, node):
+        if hasattr(node, 'func'):
+            return [node.func.id, 'function']
+        if hasattr(node, 'id'):
+            return [node.id, 'var']
         else:
-            return [node.value, None, 'other']
-        
- 
-    def is_dangerous(self, var, scope):
-        index = len(self.scope)-1
-        while index > 0:
-            if scope == 'class' and self.scope[index][0] == 'class':
-                 if var in self.scope[index][-1]:
-                     if self.scope[index][-1][var].is_dangerous:
-                         return self.scope[index][-1][var]
-                 return False
-
-            if scope == 'class' and var in self.scope[index][-1] and self.scope[index][var].var_type == 'self':
-                if self.scope[index][var].is_dangerous:
-                    return self.scope[index][var]
-                else:
-                    return False
-                
-            if scope == 'regular' and var in self.scope[index][-1] and self.scope[index][0] != 'class':
-                if self.scope[index][-1][var].is_dangerous:
-                    return self.scope[index][-1][var]
-                else:
-                    return False
-            index -= 1
-        return False
-
-    def find_class(self):
-        index = len(self.scope)-1
-        while index > 0:
-            if self.scope[index][0] == 'class':
-                return self.scope[index]
-            index -= 1
+            return [None, 'other']
 
         
-    #The type of variable
-    #Takes name object
-    def find_type(self, node):
-        if type(node).__name__ == 'Attribute':
-            if node.value.id == 'self':
-                return [node.attr, 'self']
-        if self.scope and self.scope[-1][0] == 'class':
-            return [node.id, 'class']
-        return [node.id, 'regular']
+        
+    def is_dangerous(self, node):
+        name, var_type = self.decompose_variable_type_name(node)
+        if var_type in {'var', 'function'}:
+            if name in tainted_variables: return True
+            if name in tainted_methods: return True
+            index = len(self.scope)-1
+            while index >= 0:
+                    if name in self.scope[index][-1]:
+                        return self.scope[index][-1][name].is_dangerous
+                    index -= 1
+            return False
+
+
+
+
+
+
+    #def is_dangerous(self, node, object_name):
+    #	#Trace scope.
+    #	if object_name == 'Name':
+    #		return node.id in tainted_variables
+
 
     def set_variables(self, definition, node):
         if definition == 'function':
             for index, parameter in ((index, i.arg) for index, i in enumerate(node.args.args)):
                 if parameter != 'self':
                     self.scope[-1][-1][parameter] = VariableDef('parameter', index, node.lineno, parameter)
-        
         if definition == 'regular':
-            assignment_node, assignment_name, assignment_type = self.declaration_type(node)
-            if assignment_type == 'var' and self.find_type(assignment_node)[-1] == 'regular':
-                scope = 'regular'
-            else:
-                scope = 'class'
-                
-            class_ = self.find_class()
-            assignment_danger = self.is_dangerous(assignment_name, scope)
-            for var_name, var_type in (self.find_type(target) for target in node.targets):
-  
-                new_var = VariableDef('regular', None, node.lineno, var_name)
-                if assignment_name in user_inputs or assignment_danger:
-                    new_var.is_dangerous = True
-                    if not assignment_danger:
-                        new_var.pointer = assignment_name
-                    else:
-                        new_var.pointer = assignment_danger
-                    if var_type == 'self':
-                        new_var.var_type = 'self'
-                        if var_name in class_:
-                            class_[-1][var_name] = new_var
-                        else:
-                            self.scope[-1][-1][var_name] = new_var
-                    else:
-                        self.scope[-1][-1][var_name] = new_var
-                        
-                elif var_type == 'self' and var_name in class_:
-                    if class_[-1][var_name].is_dangerous:
-                        class_[-1][var_name].is_dangerous = False
-                            
-                elif var_name in self.scope[-1][-1] and self.scope[-1][-1][var_name].is_dangerous:
-                    self.scope[-1][-1][var_name] = new_var
-                #Move everything initialized in __init__ so it will  still show up when the __init__ scope pops
-                if self.scope and self.scope[-1][1] == '__init__':
-                    for var in self.scope[-1][-1]:
-                        class_[-1][var] = self.scope[-1][-1][var]
-        
+	        assignment_danger = self.is_dangerous(node.value)
+	        for var_name in node.targets:
+	        	new_var = VariableDef('regular', None, node.lineno, var_name.id)
+	        	new_var.is_dangerous = assignment_danger
+	        	self.scope[-1][-1][var_name.id] = new_var
+
+		        	
 
 
-    
 
 
-simple_visitor = SimpleVisitor()
-example_ast = ast.parse(inspect.getsource(Test))
+
+simple_visitor = SimpleVisitor(True)
+example_ast = ast.parse(inspect.getsource(foo))
 simple_visitor.generic_visit(example_ast)
-
-all_paths = []
-for vuln in results:
-    path = []
-    path.append('Line Number ' + str(vuln[1]))
-    path.append(' ---> ' + vuln[0] + ', ')
-    if len(vuln) > 2:
-        temp = vuln[2]
-        while type(temp) != str:
-            path.append('Line Number ' + str(temp.line_number))
-            path.append(' ---> ' + temp.name + ', ')
-            temp = temp.pointer
-        path.append(' ---> ' + temp)
-        
-    all_paths.append(''.join(path))
-
-for path in all_paths:
-    print(path)
-
-
