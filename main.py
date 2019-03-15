@@ -1,6 +1,7 @@
 import inspect
 import ast
 
+#Function you want to test
 def foo(arg):
 
 	a = user_input()
